@@ -5,11 +5,10 @@
 1. 必须要 AIDL 文件吗?
 2. 客户端调用AIDL方法是同步还是异步?
 3. 服务端执行的 AIDL 方法 是在主线程吗?
-4. 内部机制是怎样的?
 
 
-1. 必须是要 AIDL 文件吗?
-答案是No, 不是必须的, 使用为了方便而已,IDE 能够给我自动生成一些代码,省去我们写代码的时间.
+##1. 必须是要 AIDL 文件吗?
+答案是No, 不是必须的, 使用 AIDL 文件只是为了方便而已,IDE 能够给我自动生成一些代码,省去我们写代码的时间.
 我们只需要 IDE 生成的那部分代码
 上一节我们直接忽略了生成的代码细节,接下来就来详细看看IDE 生成的代码是什么:
 
@@ -262,24 +261,24 @@ public interface IMyAidlInterface extends android.os.IInterface {
 }
 
 ```
-寡欲该 java 文件的一些解释,都写在 java 代码上, 代码与注释结合着看更能理解一些.
+关于该 java 文件的一些解释,都写在 java 代码上, 代码与注释结合着看更能理解一些.
 其实我们只需要 这个 java 文件就可以了, 完全可以不写 AIDL 文件
-只要我们按照上面的代码规则来, 玩去哪可以不需要 AIDL 文件, 不过那样有些麻烦.
+只要我们按照上面的代码规则来, 完全可以不需要 AIDL 文件, 不过那样有些麻烦.
 
 更具上面的代码在回顾一下上一节的内容,
-在 Service 中欧尼 Binder 方法中返回的是 Stub 类的实现对象, 
+在 Service 中 onBinder 方法中返回的是 Stub 类的实现对象, 
 然后 客户端中, onBinder 方法的第二参数 ServiceConnection中有一个 回调方法
 `void onServiceConnected(ComponentName componentName, IBinder iBinder)`
-该方法的第二个蚕食是一个 Binder 对象, 我们通过该对象 调用`Stub.asInterface(iBinder)`方法即获得 AIDL 接口实现类.
+该方法的第二个蚕食是一个 Binder 对象, 我们通过该对象 调用`Stub.asInterface(iBinder)`方法即获得 AIDL 接口实现对象.
 
 接着我们去 `asInterface` 方法中看看
 先调用 `queryLocalInterface`方法查看该 Binder内部是否已经有对应的实现对象了.
-这时候 如果客户端 和 服务端 是在你一个进程, 那么 其实 `onServiceConnected` 方法中的 Binder 对象 和 Service 中的 onBinder 返回的对象是一个对象,
+这时候 如果客户端 和 服务端 是在同一一个进程, 那么 其实 `onServiceConnected` 方法中的 Binder 对象 和 Service 中的 onBinder 返回的对象是一个对象,
 所以`queryLocalInterface`返回值不为空
 
 如果客户端和服务端不在同一进程, 那么则会 new 一个 Stub.Proxy 对象, 该对象实现了 AIDL 接口.
 
-所以我们在客户端中的 onServiceConnected 方法中 通过 `Stub.asInterface(iBinder)`方法即获得 AIDL 接口实对象就是  Stub.Proxy 对象.
+所以我们在客户端中的 onServiceConnected 方法中 通过 `Stub.asInterface(iBinder)`方法即获得 AIDL 接口实现对象就是  Stub.Proxy 对象.
 
 那么我调用给该接口的方法, 其实调用的是 Stub.Proxy 对象 中的方法.
 
@@ -287,7 +286,7 @@ public interface IMyAidlInterface extends android.os.IInterface {
 
 实现方法的内容基本一致, 过程如下
 1. 把参数序列化
-2. 调用 `onServiceConnected` 中的第二个参数 Binder 对象的 transact 方法
+2. 调用 `onServiceConnected` 中的第二个参数 Binder 对象的 transact 方法, 紧接着另一个进程中就会调用binder onTransact方法
 3. 读取 transact 方法中的_reply 参数, 并反序列化成 java对象 并返回反序列后的 java 对象
 
 ok 跨进程调用就结束了
@@ -296,84 +295,52 @@ ok 跨进程调用就结束了
 是这样的....  上面的过程基本就是跟着代码一步一步的走.
 但是走的有点迷糊...
 
-这里在做详细的解释.
 
 首先我们要知道, 连个进程之间一般情况 内存之间是不会有交集的, 各自的内存区域是独立的,  各自的对象是独立
 不能再两个进程之间 共享同一个对象.
 
 那么 我们在看到的, 在客户端中看到的`onServiceConnected`中的第二个参数 Binder 对象 是不是 Service OnBinder 方法中返回的那个对象呢?
-如果客户端与服务的那不在同一个进程, 那么可以肯定的回答 不是.
+如果客户端与服务端不在同一个进程, 那么可以肯定的回答 不是.
 
-那个我们在 客户端`onServiceConnected` 得到的对象到底是哪个对象呢?
-为什么 我们调用它的`transact` 方法,而服务端那边的 binder 对象就会同时调用对应的 `onTransact`方法呢?
+那个我们在 客户端`onServiceConnected` 得到的binder 对象到底是哪个对象呢?
+为什么 我们在客户端调用它的`transact` 方法,而服务端那边的 binder 对象就会接着调用对应的 `onTransact`方法呢?
 
-我们跟着去看看 `transact`具体实现
-IBinder 是一个接口, 在源码中有一个实现类 Binder 类,
-我们来看看 Binder的`transact`方法
-```
-/**
- * Default implementation rewinds the parcels and calls onTransact.  On
- * the remote side, transact calls into the binder to do the IPC.
- */
-public final boolean transact(int code, Parcel data, Parcel reply,
-        int flags) throws RemoteException {
-    if (false) Log.v("Binder", "Transact: " + code + " to " + this);
-    if (data != null) {
-        data.setDataPosition(0);
-    }
-    boolean r = onTransact(code, data, reply, flags);
-    if (reply != null) {
-        reply.setDataPosition(0);
-    }
-    return r;
-}
+这个问题有些复杂, 我们下一节在详细阐述
 
-```
+## 2. 客户端调用AIDL方法是同步还是异步?
+更具上面我们分析的代码来看, 客户端这边似乎没有开辟新的线程, 在transact 有没有开辟新的线程暂时还不知道.
+但是在我们执行 AIDL 方法的时候, 至少没有回调的概念, 数据都是直接返回的.没有回调这回事
+所以这里是同步的,
+既然是同步的, 那么问题来了.
+我们在进程A 的主线程执行 AIDL 方法, 那么在进程B 中真正执行该方法的线程也是主线程吗?
 
-重点在 onTransact 方法, 我们跟着去看:
-```
-protected boolean onTransact(int code, Parcel data, Parcel reply,
-        int flags) throws RemoteException {
-    if (code == INTERFACE_TRANSACTION) {
-        reply.writeString(getInterfaceDescriptor());
-        return true;
-    } else if (code == DUMP_TRANSACTION) {
-        ParcelFileDescriptor fd = data.readFileDescriptor();
-        String[] args = data.readStringArray();
-        if (fd != null) {
-            try {
-                dump(fd.getFileDescriptor(), args);
-            } finally {
-                try {
-                    fd.close();
-                } catch (IOException e) {
-                    // swallowed, not propagated back to the caller
-                }
-            }
-        }
-        // Write the StrictMode header.
-        if (reply != null) {
-            reply.writeNoException();
-        } else {
-            StrictMode.clearGatheredViolations();
-        }
-        return true;
-    }
-    return false;
-}
-```
+## 3. 服务端执行的 AIDL 方法 是在主线程吗?
+答案是 No
+服务端执行的 AIDL 方法一定不是在主线程.
+不信, 自己可以打 log 看看.
+但是这是 为什么? 
+首先由明白 这是两个进程, A 进程中的线程 与B 进程中的线程没有任何关系
+__所以不要以为 A 进程在主线程执行, B 进程也要在主线程中执行__
+如果看过 AMS 源码的就知道, 每次 AMS 想调用 ActivityThread 中的方法的时候, 
+都是通过 Binder 调用ActivityThread scheduleXXXX 方法(如: schedulePauseActivity)
+但是在这些方法内部 都是 handler 发送一个 Message, 然后主线程在获取Message, 在执行相应的方法
+因为想操作UI 必须在主线程,但是 Binder 中执行的接口方法一定不再主线程.
+那在哪个线程呢?
+在 Binder 自己开辟的一个线程中.
+具体在怎么开辟的,为什么,下一节再详细阐述
 
+这一节 通过3个简单而不普通的问题切入, 但是带来了更多复杂而深远的问题
 
+总结一下带来的问题:
+1. 客户端`onServiceConnected` 得到的binder 对象到底是哪个对象呢?
+2. 为什么 我们调用客户端 binder的`transact` 方法,而服务端那边的 binder 对象就会接着调用 `onTransact`方法呢?
+3. 服务端执行 Binder 的线程是怎么一回事 
 
-
-
-
-
-
-
-
-
-
+除了问题而且还发现一点, 似乎怎么 AIDL 跨进程调用都离不开 binder.
+客户端的 binder 调用某个方法, 接着服务端的 binder 就回调某个方法
+那么
+__Binder 到底是怎么一回事?__
+请看下节
 
 
 
